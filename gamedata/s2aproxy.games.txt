@@ -1,0 +1,37 @@
+"Games"
+{
+	"csgo"
+	{
+		"Addresses"
+		{
+			"NET_SendPacket"
+			{
+				"windows"
+				{
+					"signature"		"NET_SendPacket"
+				}
+				"linux"
+				{
+					"signature" 	"NET_SendPacket"
+				}
+			}
+		}
+		"Signatures"
+		{
+			"NET_SendPacket"
+			{
+				"library"	"engine"
+				"windows"	"\x55\x8B\xEC\x83\xE4\xF8\x83\xEC\x4C\x53\x56\x57\x8B\x7D\x0C"
+				"linux"	"\x55\x89\xE5\x57\x56\x53\x81\xEC\x4C\x01\x00\x00\x8B\x75\x14"
+			}
+		}
+		"Offsets"
+		{
+               "WindowsOrLinux"
+               {
+                    "windows" "1"
+                    "linux"   "2"
+                }
+		}
+	}
+}
