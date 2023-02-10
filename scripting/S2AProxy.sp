@@ -11,7 +11,7 @@ public Plugin myinfo =
 	name = "S2AProxy",
 	author = "Poggu",
 	description = "Detours NET_SendPacket to tamper with S2A responses",
-	version = "1.0.0"
+	version = "1.0.1"
 };
 
 GlobalForward g_ExcludeForward;
@@ -41,13 +41,14 @@ public void OnPluginStart()
 
   if(g_platform == 1)
   {
-    DHookAddParam(hNetSendPacket, HookParamType_Int, .custom_register=DHookRegister_EDX); // Windows call convention
-    DHookAddParam(hNetSendPacket, HookParamType_ObjectPtr, -1, DHookPass_ByRef, DHookRegister_ECX);
+    DHookAddParam(hNetSendPacket, HookParamType_Int, .custom_register=DHookRegister_ECX);
+    DHookAddParam(hNetSendPacket, HookParamType_ObjectPtr, -1, .custom_register=DHookRegister_EDX); // Windows call convention
   }
   else
   {
     DHookAddParam(hNetSendPacket, HookParamType_Int);
-    DHookAddParam(hNetSendPacket, HookParamType_ObjectPtr, -1, DHookPass_ByRef);
+    //DHookAddParam(hNetSendPacket, HookParamType_ObjectPtr, -1, DHookPass_ByRef);
+    DHookAddParam(hNetSendPacket, HookParamType_Int);
   }
   DHookAddParam(hNetSendPacket, HookParamType_Int);
   DHookAddParam(hNetSendPacket, HookParamType_Int);
@@ -55,6 +56,8 @@ public void OnPluginStart()
 
   if (!DHookEnableDetour(hNetSendPacket, false, Detour_OnNetSendPacket))
       SetFailState("Failed to detour NET_SendPacket.");
+
+  delete hGameConf;
 
   g_ExcludeForward = new GlobalForward("OnClientPlayerList", ET_Event, Param_String);
   g_ExcludeCountForward = new GlobalForward("OnServerExcludeCount", ET_Event, Param_CellByRef);
@@ -65,7 +68,7 @@ public APLRes AskPluginLoad2(Handle plugin, bool late, char[] error, int err_max
     RegPluginLibrary("S2AProxy");
 }
 
-int GetInfoPlayersIndex(const int[] bytes)
+int GetInfoPlayersIndex(const char[] bytes)
 {
   int cursor = 6; // Skip header + protocol;
   int strings;
@@ -82,7 +85,7 @@ int GetInfoPlayersIndex(const int[] bytes)
   return cursor;
 }
 
-int RetrieveData(const int[] bytes, int[] out)
+int RetrieveData(const char[] bytes, char[] out, int length)
 {
   int cursor = 5; // skip header
   int outCursor;
@@ -99,16 +102,16 @@ int RetrieveData(const int[] bytes, int[] out)
   outCursor += 6;
 
   cursor++; // skip player count
-  for(int i = 0; i < players; i++)
+  while(cursor < length)
   {
     char name[MAX_NAME_LENGTH];
     int nameLength;
 
-    do
+    while(bytes[cursor + 1 + nameLength] != '\0')
     {
       name[nameLength] = bytes[cursor + 1 + nameLength];
       nameLength++;
-    } while(bytes[cursor + nameLength] != '\0');
+    }
 
     // Expose forward for other plugins to exclude players
 
@@ -118,7 +121,12 @@ int RetrieveData(const int[] bytes, int[] out)
     Call_Finish(result);
 
     if(result == Plugin_Handled || result == Plugin_Stop)
+    {
+      // cursor is the cursor that goes through the bytes of the original data
+      // we have to make sure we skip all the data related to the skipped player so our outCursor and cursor don't go out of sync wreck all the data
+      cursor += nameLength + 1 + 1 + 4 + 4; // Skip name + null, id, skip duration, skip score
       continue;
+    }
 
     outPlayers++;
     nameLength = 0;
@@ -127,11 +135,11 @@ int RetrieveData(const int[] bytes, int[] out)
     cursor++; // skip id
     outCursor++;
 
-    do
+    while(bytes[cursor + nameLength] != '\0')
     {
       out[outCursor + nameLength] = bytes[cursor + nameLength];
       nameLength++;
-    } while(bytes[cursor + nameLength] != '\0');
+    }
 
     cursor += nameLength + 1; // skip name + null
     outCursor += nameLength + 1;
@@ -159,8 +167,14 @@ public MRESReturn Detour_OnNetSendPacket(Handle hReturn, Handle hParams)
 {
   Address strAddress = DHookGetParam(hParams, 3);
   int size = DHookGetParam(hParams, 4);
-  int bytes[512];
 
+  if(size <= 4)
+  {
+    PrintToServer("[S2AProxy - ERROR] size smaller than 4");
+    return MRES_Ignored;
+  }
+
+  char bytes[2048];
   int packetHeader = LoadFromAddress(strAddress + view_as<Address>(4), NumberType_Int8);
 
   if(packetHeader != 0x44 && packetHeader != 0x49)
@@ -174,8 +188,8 @@ public MRESReturn Detour_OnNetSendPacket(Handle hReturn, Handle hParams)
 
   if(packetHeader == 0x44) // A2S_PLAYER
   {
-    int newData[512];
-    int newSize = RetrieveData(bytes, newData);
+    char newData[2048];
+    int newSize = RetrieveData(bytes, newData, size);
     for(int i = 0; i < newSize; i++)
     {
       StoreToAddress(strAddress + view_as<Address>(i), newData[i], NumberType_Int8);
